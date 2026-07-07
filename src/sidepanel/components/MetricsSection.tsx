@@ -1,5 +1,6 @@
 import type { Metrics } from '../../shared/types';
 import { t, type Language } from '../../shared/i18n';
+import { formatNumber, formatPercent, isValidNumber } from '../../shared/format-number';
 import { Box, Info } from 'lucide-react';
 
 interface MetricsSectionProps {
@@ -8,17 +9,19 @@ interface MetricsSectionProps {
 }
 
 export function MetricsSection({ metrics, language }: MetricsSectionProps) {
+  const waiting = t('waiting', language);
+
   return (
     <div className="space-y-3">
       <div className="flex items-center justify-between px-1">
         <h3 className="text-xs font-semibold tracking-wider text-gray-500 uppercase">
           {t('metricsTitle', language)}
         </h3>
-        {metrics && (
+        {metrics && isValidNumber(metrics.compositeScore) && (
           <div className="flex items-center gap-2 bg-[#131722] border border-[#2a2e39] px-2 py-1 rounded-md">
             <span className="text-[10px] text-gray-400">{t('compositeScore', language)}</span>
             <span className="text-xs font-mono font-bold text-emerald-400">
-              {metrics.compositeScore.toFixed(1)}
+              {formatNumber(metrics.compositeScore, 1)}
             </span>
           </div>
         )}
@@ -31,9 +34,9 @@ export function MetricsSection({ metrics, language }: MetricsSectionProps) {
             <Info className="w-3.5 h-3.5 text-gray-600" />
           </div>
           <div
-            className={`text-2xl font-semibold font-mono ${metrics && metrics.sharpe > 1 ? 'text-emerald-400' : 'text-rose-400'}`}
+            className={`text-2xl font-semibold font-mono ${metrics && isValidNumber(metrics.sharpe) && metrics.sharpe > 1 ? 'text-emerald-400' : 'text-rose-400'}`}
           >
-            {metrics ? metrics.sharpe.toFixed(2) : t('waiting', language)}
+            {formatNumber(metrics?.sharpe, 2, waiting)}
           </div>
         </div>
 
@@ -43,9 +46,9 @@ export function MetricsSection({ metrics, language }: MetricsSectionProps) {
             <Info className="w-3.5 h-3.5 text-gray-600" />
           </div>
           <div
-            className={`text-2xl font-semibold font-mono ${metrics && metrics.sortino > 1 ? 'text-emerald-400' : 'text-rose-400'}`}
+            className={`text-2xl font-semibold font-mono ${metrics && isValidNumber(metrics.sortino) && metrics.sortino > 1 ? 'text-emerald-400' : 'text-rose-400'}`}
           >
-            {metrics ? metrics.sortino.toFixed(2) : t('waiting', language)}
+            {formatNumber(metrics?.sortino, 2, waiting)}
           </div>
         </div>
       </div>
@@ -61,7 +64,7 @@ export function MetricsSection({ metrics, language }: MetricsSectionProps) {
               {t('rSquared', language)}
             </div>
             <div className="text-lg font-mono text-white">
-              {metrics ? (metrics.rSquared * 100).toFixed(2) : t('waiting', language)}%
+              {formatPercent(metrics?.rSquared, 2, waiting)}
             </div>
           </div>
           <div>
@@ -69,7 +72,7 @@ export function MetricsSection({ metrics, language }: MetricsSectionProps) {
               {t('dailyGrowth', language)}
             </div>
             <div className="text-lg font-mono text-amber-400">
-              {metrics ? (metrics.k * 100).toFixed(2) : t('waiting', language)}%
+              {formatPercent(metrics?.k, 2, waiting)}
             </div>
           </div>
         </div>
@@ -82,7 +85,7 @@ export function MetricsSection({ metrics, language }: MetricsSectionProps) {
             <div className="text-sm text-gray-400">{t('maxTTRDesc', language)}</div>
           </div>
           <div className="text-xl font-mono text-white mt-2">
-            {metrics ? metrics.maxTTR : t('waiting', language)}{' '}
+            {formatNumber(metrics?.maxTTR, 0, waiting)}{' '}
             <span className="text-sm text-gray-500">{t('days', language)}</span>
           </div>
         </div>
@@ -95,7 +98,7 @@ export function MetricsSection({ metrics, language }: MetricsSectionProps) {
             <div className="text-sm text-gray-400">{t('maxDrawdownDesc', language)}</div>
           </div>
           <div className="text-xl font-mono text-rose-400 mt-2">
-            {metrics ? (metrics.maxDrawdown * 100).toFixed(2) : t('waiting', language)}%
+            {formatPercent(metrics?.maxDrawdown, 2, waiting)}
           </div>
         </div>
       </div>

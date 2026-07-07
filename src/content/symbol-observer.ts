@@ -1,74 +1,102 @@
+import { extractSymbolFromTitle } from '../shared/tv-protocol';
+
 type SymbolChangeHandler = (symbol: string | null) => void;
 
 const SYMBOL_SELECTORS = [
   '[data-symbol-short]',
   '[data-symbol-full]',
+  '[data-name="legend-source-title"]',
   '[class*="symbolTitle"]',
-  '[class*="chart-markup-table"] [class*="symbol"]',
+  '#header-toolbar-symbol-search',
+  '#header-toolbar-symbol-search [class*="text"]',
+  'button[data-tooltip*="Symbol"]',
+  'button[data-tooltip*="Symbol"] [class*="text"]',
+  '[data-role="button"][class*="title"]',
 ];
 
-function parseTitleSymbol(): string | null {
-  const match = document.title.match(/^(.+?)\s+[·•\-–—|]/);
-  if (match?.[1]) {
-    return match[1].trim();
-  }
-  const simple = document.title.split(' ')[0];
-  return simple?.length ? simple.trim() : null;
-}
-
-export function getCurrentSymbol(): string | null {
+export function getDomSymbol(): string | null {
   for (const selector of SYMBOL_SELECTORS) {
     const el = document.querySelector(selector);
     if (!el) continue;
+
     const value =
       el.getAttribute('data-symbol-short') ||
       el.getAttribute('data-symbol-full') ||
       el.textContent?.trim();
+
     if (value) return value;
   }
-  return parseTitleSymbol();
+
+  return extractSymbolFromTitle(document.title);
+}
+
+function patchHistory(listener: () => void) {
+  const { pushState, replaceState } = history;
+
+  history.pushState = function (...args) {
+    const result = pushState.apply(this, args);
+    listener();
+    return result;
+  };
+
+  history.replaceState = function (...args) {
+    const result = replaceState.apply(this, args);
+    listener();
+    return result;
+  };
+
+  window.addEventListener('popstate', listener);
 }
 
 export class SymbolObserver {
   private observer: MutationObserver | null = null;
   private current: string | null = null;
   private debounceTimer: ReturnType<typeof setTimeout> | null = null;
-  private unknownTimer: ReturnType<typeof setTimeout> | null = null;
+  private disabled = false;
+  private historyPatched = false;
 
   constructor(private onChange: SymbolChangeHandler) {}
+
+  setDisabled(disabled: boolean) {
+    this.disabled = disabled;
+  }
 
   start() {
     this.checkSymbol();
     this.observer = new MutationObserver(() => this.scheduleCheck());
-    const root = document.documentElement;
-    this.observer.observe(root, {
+    this.observer.observe(document.documentElement, {
       childList: true,
       subtree: true,
       characterData: true,
       attributes: true,
     });
 
-    this.unknownTimer = setTimeout(() => {
-      if (!this.current) {
-        this.onChange(null);
-      }
-    }, 5000);
+    if (!this.historyPatched) {
+      this.historyPatched = true;
+      patchHistory(() => this.scheduleCheck());
+    }
   }
 
   stop() {
     this.observer?.disconnect();
     if (this.debounceTimer) clearTimeout(this.debounceTimer);
-    if (this.unknownTimer) clearTimeout(this.unknownTimer);
+  }
+
+  forceCheck() {
+    this.checkSymbol();
   }
 
   private scheduleCheck() {
+    if (this.disabled) return;
     if (this.debounceTimer) clearTimeout(this.debounceTimer);
     this.debounceTimer = setTimeout(() => this.checkSymbol(), 300);
   }
 
   private checkSymbol() {
-    const next = getCurrentSymbol();
-    if (next === this.current) return;
+    if (this.disabled) return;
+
+    const next = getDomSymbol();
+    if (!next || next === this.current) return;
     this.current = next;
     this.onChange(next);
   }

@@ -51,14 +51,42 @@ export default function App() {
   useEffect(() => {
     void refreshState();
 
-    const listener = (message: { type?: string; payload?: StateSyncPayload }) => {
-      if (message.type === MESSAGE_TYPES.STATE_SYNC && message.payload) {
-        setState(message.payload);
+    const onTabActivated = () => {
+      void refreshState();
+    };
+
+    const onTabUpdated = (
+      _tabId: number,
+      changeInfo: chrome.tabs.TabChangeInfo
+    ) => {
+      if (changeInfo.url || changeInfo.status === 'complete') {
+        void refreshState();
       }
     };
 
+    chrome.tabs.onActivated.addListener(onTabActivated);
+    chrome.tabs.onUpdated.addListener(onTabUpdated);
+
+    const listener = (message: {
+      type?: string;
+      tabId?: number;
+      payload?: StateSyncPayload;
+    }) => {
+      if (message.type !== MESSAGE_TYPES.STATE_SYNC || !message.payload) return;
+
+      void getActiveTabId().then((activeId) => {
+        if (!activeId || message.tabId !== activeId) return;
+        setTabId(activeId);
+        setState(message.payload as StateSyncPayload);
+      });
+    };
+
     chrome.runtime.onMessage.addListener(listener);
-    return () => chrome.runtime.onMessage.removeListener(listener);
+    return () => {
+      chrome.tabs.onActivated.removeListener(onTabActivated);
+      chrome.tabs.onUpdated.removeListener(onTabUpdated);
+      chrome.runtime.onMessage.removeListener(listener);
+    };
   }, [refreshState]);
 
   const updateSettings = (settings: AppSettings) => {

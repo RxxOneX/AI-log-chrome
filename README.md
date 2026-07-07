@@ -68,6 +68,7 @@ sidepanel (React) -- 展示 UI
 |------|------|
 | `sidePanel` | 在浏览器侧边栏展示分析面板 |
 | `storage` | 保存设置、监控列表、指标缓存 |
+| `scripting` | 在页面主世界注入 WebSocket 拦截脚本（绕过 TradingView CSP） |
 | `host_permissions: tradingview.com` | 在 TV 图表页注入 content script |
 
 ## 已知限制
@@ -79,13 +80,13 @@ sidepanel (React) -- 展示 UI
 
 ## Symbol 检测维护
 
-标的检测逻辑位于 `src/content/symbol-observer.ts`，按以下优先级解析：
+标的检测按以下优先级解析：
 
-1. `[data-symbol-short]` / `[data-symbol-full]`
-2. chart header 内 symbol 相关 class 节点
-3. `document.title` 正则解析
+1. **WebSocket 协议**（首选）：拦截 `resolve_symbol`（出站）与 `symbol_resolved`（入站）消息，从 TradingView 协议中提取完整标的。逻辑位于 `src/shared/tv-protocol.ts` 与 `src/inject/inject.ts`。
+2. **DOM 选择器**（回退）：`src/content/symbol-observer.ts` 中的 `SYMBOL_SELECTORS`
+3. **页面标题**（最后回退）：`document.title` 正则解析
 
-若检测失败，面板显示「无法识别标的」。更新步骤：
+若检测失败，面板显示「无法识别标的」。DOM 回退更新步骤：
 
 1. 在 TV 图表页打开 DevTools，定位 symbol 元素
 2. 将新 selector 添加到 `SYMBOL_SELECTORS` 数组

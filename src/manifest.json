@@ -4,7 +4,7 @@
   "description": "__MSG_extDescription__",
   "version": "1.0.0",
   "default_locale": "zh_CN",
-  "permissions": ["sidePanel", "storage"],
+  "permissions": ["sidePanel", "storage", "scripting", "tabs", "webNavigation", "cookies"],
   "host_permissions": ["*://*.tradingview.com/*"],
   "background": {
     "service_worker": "src/background/service-worker.ts",
@@ -20,13 +20,8 @@
     {
       "matches": ["*://*.tradingview.com/chart/*"],
       "js": ["src/content/content.ts"],
-      "run_at": "document_start"
-    }
-  ],
-  "web_accessible_resources": [
-    {
-      "resources": ["src/inject/inject.ts"],
-      "matches": ["*://*.tradingview.com/*"]
+      "run_at": "document_start",
+      "all_frames": true
     }
   ]
 }

@@ -6,6 +6,8 @@ import {
   calculateSharpeRatio,
   calculateSortinoRatio,
 } from './math';
+import { finiteOrZero, isValidNumber } from './format-number';
+import { isValidBar, sanitizeBars } from './bar-sanitize';
 import type { AlertResult, AlertSettings, Bar, DateRange, Metrics } from './types';
 
 function clamp(value: number, min: number, max: number) {
@@ -49,29 +51,30 @@ export function calculateCompositeScore(r2: number, sharpe: number, sortino: num
 }
 
 export function computeMetrics(bars: Bar[]): Metrics | null {
-  if (bars.length < 2) return null;
+  const validBars = sanitizeBars(bars);
+  if (validBars.length < 2) return null;
 
-  const prices = bars.map((b) => b.close);
+  const prices = validBars.map((b) => b.close);
   const returns = calculateReturns(prices);
   const sharpe = calculateSharpeRatio(returns);
   const sortino = calculateSortinoRatio(returns);
   const maxTTR = calculateMaxTTR(prices);
   const maxDrawdown = calculateMaxDrawdown(prices);
 
-  const fitData = bars.map((_, i) => ({ x: i, y: prices[i] }));
+  const fitData = validBars.map((_, i) => ({ x: i, y: prices[i] }));
   const fit = calculateExponentialFit(fitData);
   const rSquared = fit?.rSquared ?? 0;
   const k = fit?.k ?? 0;
   const compositeScore = calculateCompositeScore(rSquared, sharpe, sortino);
 
   return {
-    sharpe,
-    sortino,
-    maxTTR,
-    maxDrawdown,
-    rSquared,
-    k,
-    compositeScore,
+    sharpe: finiteOrZero(sharpe),
+    sortino: finiteOrZero(sortino),
+    maxTTR: finiteOrZero(maxTTR),
+    maxDrawdown: finiteOrZero(maxDrawdown),
+    rSquared: finiteOrZero(rSquared),
+    k: finiteOrZero(k),
+    compositeScore: finiteOrZero(compositeScore),
   };
 }
 
@@ -108,8 +111,15 @@ export function evaluateAlert(
 }
 
 export function barsToChartData(bars: Bar[]): { time: string; value: number }[] {
-  return bars.map((bar) => ({
-    time: barToDateString(bar.time),
-    value: bar.close,
-  }));
+  const byTime = new Map<string, number>();
+
+  for (const bar of bars) {
+    if (!isValidBar(bar)) continue;
+    byTime.set(barToDateString(bar.time), bar.close);
+  }
+
+  return Array.from(byTime.entries())
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([time, value]) => ({ time, value }))
+    .filter((point) => isValidNumber(point.value));
 }

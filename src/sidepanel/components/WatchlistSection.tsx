@@ -1,5 +1,6 @@
 import type { WatchlistItem } from '../../shared/types';
 import { t, type Language } from '../../shared/i18n';
+import { formatNumber, isValidNumber } from '../../shared/format-number';
 import { Bell, BellRing } from 'lucide-react';
 
 interface WatchlistSectionProps {
@@ -12,10 +13,10 @@ interface WatchlistSectionProps {
 }
 
 function formatChange(changePct?: number): string {
-  if (changePct === undefined) return '--';
+  if (!isValidNumber(changePct)) return '--';
   const pct = changePct * 100;
   const sign = pct >= 0 ? '+' : '';
-  return `${sign}${pct.toFixed(1)}%`;
+  return `${sign}${formatNumber(pct, 1)}%`;
 }
 
 export function WatchlistSection({
@@ -61,7 +62,7 @@ export function WatchlistSection({
                 >
                   <div className="font-semibold text-gray-200 text-sm">{item.symbol}</div>
                   <div className="text-right font-mono text-emerald-400 text-sm font-semibold pr-2">
-                    {score !== undefined ? score.toFixed(1) : '--'}
+                    {formatNumber(score, 1)}
                   </div>
                   <div
                     className={`text-right font-mono text-sm pr-2 ${change.startsWith('+') ? 'text-emerald-400' : change.startsWith('-') ? 'text-rose-400' : 'text-gray-400'}`}

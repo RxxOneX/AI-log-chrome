@@ -10,6 +10,15 @@
 | type | `TV_QUANTS_DATA` |
 | payload | TradingView WebSocket 解析后的 JSON（`m` 为 `timescale_update` 或 `du`） |
 
+### `TV_QUANTS_SYMBOL`
+
+从 WebSocket 协议消息（`resolve_symbol` / `symbol_resolved` / `quote_add_symbols`）解析出的当前图表标的。
+
+| 字段 | 值 |
+|------|-----|
+| type | `TV_QUANTS_SYMBOL` |
+| symbol | `string`，如 `NASDAQ:AAPL` |
+
 ## Content Script -> Service Worker
 
 发送方通过 `sender.tab.id` 标识标签页，消息体不含 `tabId`。
@@ -29,6 +38,18 @@ K 线数据更新。
 
 触发时机：解析到新的 timeseries 数据后。
 
+### `REQUEST_INJECT`
+
+请求 Service Worker 通过 `chrome.scripting.executeScript` 在页面主世界注入 WebSocket 拦截脚本。
+
+```typescript
+{ type: 'REQUEST_INJECT' }
+```
+
+触发时机：Content Script 在 `document_start` 启动时。使用 `sender.tab.id` 定位标签页。
+
+注入方式使用 `world: 'MAIN'`，避免 TradingView CSP 拦截 `<script src>` 标签。
+
 ### `SYMBOL_CHANGED`
 
 当前图表标的变更。
@@ -40,7 +61,7 @@ K 线数据更新。
 }
 ```
 
-触发时机：`SymbolObserver` 检测到 symbol 变化。
+触发时机：`SymbolObserver` 检测到 symbol 变化，或 inject 脚本从 WebSocket 协议解析到 symbol。
 
 ### `CONNECTION_STATUS`
 

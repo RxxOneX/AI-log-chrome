@@ -3,6 +3,7 @@ import { ColorType, createChart, IChartApi, ISeriesApi, LineSeries } from 'light
 import { calculateExponentialFit } from '../../shared/math';
 import type { Bar } from '../../shared/types';
 import { barsToChartData } from '../../shared/metrics';
+import { isValidNumber } from '../../shared/format-number';
 
 interface ChartPanelProps {
   bars: Bar[];
@@ -15,16 +16,20 @@ export function ChartPanel({ bars, showExpFit }: ChartPanelProps) {
   const seriesRef = useRef<ISeriesApi<'Line'> | null>(null);
 
   useEffect(() => {
-    if (!chartContainerRef.current || bars.length === 0) return;
+    if (!chartContainerRef.current) return;
 
     const data = barsToChartData(bars);
+    if (data.length < 2) return;
+
     const fitData = data.map((d, i) => ({ x: i, y: d.value }));
     const fit = calculateExponentialFit(fitData);
     const expLineData = fit
-      ? data.map((d, i) => ({
-          time: d.time,
-          value: fit.a * Math.exp(fit.k * i),
-        }))
+      ? data
+          .map((d, i) => ({
+            time: d.time,
+            value: fit.a * Math.exp(fit.k * i),
+          }))
+          .filter((point) => isValidNumber(point.value))
       : [];
 
     const handleResize = () => {
@@ -58,23 +63,31 @@ export function ChartPanel({ bars, showExpFit }: ChartPanelProps) {
 
     chartRef.current = chart;
 
-    const mainSeries = chart.addSeries(LineSeries, {
-      color: '#2962FF',
-      lineWidth: 2,
-    });
-    mainSeries.setData(data as { time: string; value: number }[]);
-    seriesRef.current = mainSeries;
-
-    if (showExpFit && expLineData.length > 0) {
-      const expSeries = chart.addSeries(LineSeries, {
-        color: '#F6A800',
+    try {
+      const mainSeries = chart.addSeries(LineSeries, {
+        color: '#2962FF',
         lineWidth: 2,
-        lineStyle: 2,
       });
-      expSeries.setData(expLineData as { time: string; value: number }[]);
-    }
+      mainSeries.setData(data);
+      seriesRef.current = mainSeries;
 
-    chart.timeScale().fitContent();
+      if (showExpFit && expLineData.length > 0) {
+        const expSeries = chart.addSeries(LineSeries, {
+          color: '#F6A800',
+          lineWidth: 2,
+          lineStyle: 2,
+        });
+        expSeries.setData(expLineData);
+      }
+
+      chart.timeScale().fitContent();
+    } catch (error) {
+      console.error('Chart render failed:', error);
+      chart.remove();
+      chartRef.current = null;
+      seriesRef.current = null;
+      return;
+    }
     window.addEventListener('resize', handleResize);
 
     return () => {
@@ -85,7 +98,7 @@ export function ChartPanel({ bars, showExpFit }: ChartPanelProps) {
     };
   }, [bars, showExpFit]);
 
-  if (bars.length === 0) {
+  if (bars.length === 0 || barsToChartData(bars).length < 2) {
     return (
       <div className="h-[180px] bg-[#131722] border border-[#2a2e39] rounded-xl flex items-center justify-center text-xs text-gray-500">
         --
