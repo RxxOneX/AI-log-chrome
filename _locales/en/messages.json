@@ -1,0 +1,11 @@
+{
+  "extName": {
+    "message": "TradingView Quant Metrics"
+  },
+  "extDescription": {
+    "message": "Calculate exponential fit, Sharpe, Sortino, TTR, and max drawdown on TradingView charts."
+  },
+  "actionTitle": {
+    "message": "Open quant analysis panel"
+  }
+}

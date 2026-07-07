@@ -1,0 +1,11 @@
+{
+  "extName": {
+    "message": "TradingView 量化指标分析"
+  },
+  "extDescription": {
+    "message": "在 TradingView 图表上计算指数拟合、夏普比率、索提诺比率、TTR 与最大回撤等量化指标。"
+  },
+  "actionTitle": {
+    "message": "打开量化分析面板"
+  }
+}
