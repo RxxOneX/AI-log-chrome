@@ -1,19 +1,41 @@
 import type { Bar } from '../shared/types';
 import { isValidBar } from '../shared/bar-sanitize';
+import { symbolsEquivalent } from '../shared/tv-chart-probe';
 import { mergeBars, MIN_USABLE_BARS, shouldAcceptBarReplace } from '../shared/bar-merge';
+import { isSameSeriesSignature, seriesSignature } from '../shared/series-signature';
 
 export class BarStore {
   private bars = new Map<number, Bar>();
   private symbol: string | null = null;
   private snapshotLoaded = false;
+  private staleSeriesSignature: string | null = null;
 
   setSymbol(symbol: string | null) {
     const normalized = symbol?.trim() || null;
-    if (normalized === this.symbol) return;
+    if (symbolsEquivalent(normalized, this.symbol)) {
+      this.symbol = normalized;
+      return;
+    }
+
+    const existing = this.getBars();
+    if (existing.length >= 2) {
+      this.staleSeriesSignature = seriesSignature(existing);
+    } else {
+      this.staleSeriesSignature = null;
+    }
 
     this.symbol = normalized;
     this.bars.clear();
     this.snapshotLoaded = false;
+  }
+
+  isStaleSeries(bars: Bar[]): boolean {
+    if (!this.staleSeriesSignature || bars.length < 2) return false;
+    return isSameSeriesSignature(seriesSignature(bars), this.staleSeriesSignature);
+  }
+
+  clearStaleSeriesSignature() {
+    this.staleSeriesSignature = null;
   }
 
   getSymbol(): string | null {
@@ -29,6 +51,9 @@ export class BarStore {
   }
 
   ingestSeries(series: Array<{ v?: number[] }>) {
+    if (this.snapshotLoaded) return false;
+
+    let changed = false;
     for (const item of series) {
       if (!item.v || item.v.length < 5) continue;
       const [time, open, high, low, close] = item.v;
@@ -45,7 +70,9 @@ export class BarStore {
       const bar = { time, open, high, low, close };
       if (!isValidBar(bar)) continue;
       this.bars.set(time, bar);
+      changed = true;
     }
+    return changed;
   }
 
   replaceBars(bars: Bar[], symbolChanged = false) {
@@ -58,6 +85,7 @@ export class BarStore {
       this.bars.set(bar.time, bar);
     }
     this.snapshotLoaded = bars.length >= MIN_USABLE_BARS;
+    this.staleSeriesSignature = null;
     return true;
   }
 
@@ -85,5 +113,6 @@ export class BarStore {
   clear() {
     this.bars.clear();
     this.snapshotLoaded = false;
+    this.staleSeriesSignature = null;
   }
 }

@@ -1,4 +1,4 @@
-import { extractSymbolFromTitle } from '../shared/tv-protocol';
+import { extractSymbolFromTitle, isValidTvSymbolFormat } from '../shared/tv-protocol';
 
 type SymbolChangeHandler = (symbol: string | null) => void;
 
@@ -24,10 +24,11 @@ export function getDomSymbol(): string | null {
       el.getAttribute('data-symbol-full') ||
       el.textContent?.trim();
 
-    if (value) return value;
+    if (value && isValidTvSymbolFormat(value)) return value;
   }
 
-  return extractSymbolFromTitle(document.title);
+  const fromTitle = extractSymbolFromTitle(document.title);
+  return fromTitle && isValidTvSymbolFormat(fromTitle) ? fromTitle : null;
 }
 
 function patchHistory(listener: () => void) {

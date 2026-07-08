@@ -83,6 +83,21 @@ export function extractSymbolFromPayload(payload: TvPayload): string | null {
   }
 }
 
+export function extractChartSymbolFromPayload(payload: TvPayload): string | null {
+  const method = payload.m;
+  const params = payload.p;
+  if (!method || !Array.isArray(params)) return null;
+
+  switch (method) {
+    case 'symbol_resolved':
+      return parseSymbolInfo(params[2]);
+    case 'resolve_symbol':
+      return parseSymbolDescriptor(params[2]);
+    default:
+      return null;
+  }
+}
+
 export function extractSymbolFromUrl(url: string): string | null {
   try {
     const value = new URL(url).searchParams.get('symbol');
@@ -118,12 +133,39 @@ export function extractSymbolFromTitle(title: string): string | null {
 function isLikelySymbol(value: string): boolean {
   if (!value || value.startsWith('=') || value.length > 64) return false;
   if (value.toLowerCase().includes('tradingview')) return false;
-  return true;
+  return isValidTvSymbolFormat(value);
+}
+
+export function isValidTvSymbolFormat(value: string): boolean {
+  const normalized = value.trim();
+  if (!normalized || normalized.length > 48) return false;
+  if (/[\s%▼▲·•\u2190-\u21ff\u4e00-\u9fff]/u.test(normalized)) return false;
+
+  const colonIdx = normalized.indexOf(':');
+  if (colonIdx > 0) {
+    const exchange = normalized.slice(0, colonIdx);
+    const ticker = normalized.slice(colonIdx + 1);
+    return (
+      /^[A-Z0-9._-]+$/i.test(exchange) &&
+      ticker.length > 0 &&
+      /^[A-Z0-9._-]+$/i.test(ticker)
+    );
+  }
+
+  return /^[A-Z0-9._-]+$/i.test(normalized);
 }
 
 export function extractSymbolFromFrames(data: string): string | null {
   for (const payload of parseTvFrames(data)) {
     const symbol = extractSymbolFromPayload(payload);
+    if (symbol) return symbol;
+  }
+  return null;
+}
+
+export function extractChartSymbolFromFrames(data: string): string | null {
+  for (const payload of parseTvFrames(data)) {
+    const symbol = extractChartSymbolFromPayload(payload);
     if (symbol) return symbol;
   }
   return null;

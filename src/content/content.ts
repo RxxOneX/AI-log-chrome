@@ -8,10 +8,11 @@ import {
 } from '../shared/messages';
 import type { Bar } from '../shared/types';
 import { shouldSendIncrementalUpdate } from '../shared/bar-merge';
+import { areBarsCoherent } from '../shared/bar-coherence';
 import { extractSeriesFromTvPayload } from '../shared/bar-parser';
 import type { SymbolSource } from '../shared/tv-chart-probe';
-import { normalizeTvSymbol } from '../shared/tv-chart-probe';
-import { extractSymbolFromUrl } from '../shared/tv-protocol';
+import { normalizeTvSymbol, symbolsEquivalent } from '../shared/tv-chart-probe';
+import { extractSymbolFromUrl, isValidTvSymbolFormat } from '../shared/tv-protocol';
 import {
   isExtensionContextValid,
   installContextGuard,
@@ -24,6 +25,7 @@ import { BarStore } from './bar-store';
 import { getDomSymbol, SymbolObserver } from './symbol-observer';
 import { SymbolTracker } from './symbol-tracker';
 import { initPipelineDiagnostic } from './pipeline-diagnostic';
+import { installPageConsoleBridge } from './install-page-bridge';
 
 const barStore = new BarStore();
 const symbolTracker = new SymbolTracker(extractSymbolFromUrl(window.location.href));
@@ -42,6 +44,8 @@ function sendBarsUpdate() {
   const symbol = symbolTracker.get();
   const bars = barStore.getBars();
   if (bars.length < 2) return;
+  if (symbol && activeSymbol && !symbolsEquivalent(symbol, activeSymbol)) return;
+  if (!areBarsCoherent(bars)) return;
 
   const now = Date.now();
   lastSentAt = now;
@@ -81,7 +85,10 @@ function sendSymbolChanged(symbol: string | null) {
 }
 
 function commitActiveSymbol(next: string) {
-  if (next === activeSymbol) return false;
+  if (symbolsEquivalent(next, activeSymbol)) {
+    activeSymbol = next;
+    return false;
+  }
 
   activeSymbol = next;
   barStore.setSymbol(next);
@@ -93,10 +100,17 @@ function updateSymbol(source: SymbolSource, symbol: string | null) {
   if (!isExtensionContextValid()) return false;
 
   const prevEffective = symbolTracker.get();
+
+  if (symbol && prevEffective && !symbolsEquivalent(symbol, prevEffective)) {
+    if (source === 'chart') {
+      symbolTracker.invalidateStaleSources(symbol, source);
+    }
+  }
+
   symbolTracker.commit(source, symbol);
   const nextEffective = symbolTracker.get();
 
-  if (!nextEffective || nextEffective === prevEffective) return false;
+  if (!nextEffective || symbolsEquivalent(nextEffective, prevEffective)) return false;
   return commitActiveSymbol(nextEffective);
 }
 
@@ -112,7 +126,7 @@ function resyncToBackground() {
     return;
   }
 
-  if (symbol !== activeSymbol) {
+  if (symbol !== activeSymbol && !symbolsEquivalent(symbol, activeSymbol)) {
     commitActiveSymbol(symbol);
   }
 
@@ -122,7 +136,7 @@ function resyncToBackground() {
 }
 
 function handleInjectSymbol(symbol: string, source: SymbolSource = 'ws') {
-  if (!symbol) return;
+  if (!symbol || source === 'ws') return;
   updateSymbol(source, symbol);
 }
 
@@ -134,15 +148,22 @@ function handleDomSymbol(symbol: string | null) {
 
 function handleBarsSnapshot(symbol: string, bars: Bar[]) {
   if (!isExtensionContextValid() || bars.length < 2) return;
+  if (!areBarsCoherent(bars)) return;
+  if (barStore.isStaleSeries(bars)) return;
 
   const normalized = normalizeTvSymbol(symbol);
+  if (!normalized || !isValidTvSymbolFormat(normalized)) return;
+
+  symbolTracker.commit('chart', normalized);
+  const effective = symbolTracker.get() ?? normalized;
+  if (!effective || !symbolsEquivalent(effective, normalized)) return;
+
   const symbolChanged =
-    activeSymbol !== null && normalized !== null && activeSymbol !== normalized;
+    activeSymbol !== null && !symbolsEquivalent(activeSymbol, effective);
 
-  updateSymbol('chart', symbol);
-
-  const effective = symbolTracker.get();
-  if (effective && effective !== barStore.getSymbol()) {
+  if (symbolChanged || !activeSymbol) {
+    commitActiveSymbol(effective);
+  } else if (!symbolsEquivalent(barStore.getSymbol(), effective)) {
     barStore.setSymbol(effective);
   }
 
@@ -153,14 +174,16 @@ function handleBarsSnapshot(symbol: string, bars: Bar[]) {
 }
 
 function handleTvData(payload: { p?: unknown[] }) {
-  if (!isExtensionContextValid()) return;
+  if (!isExtensionContextValid() || barStore.hasSnapshot()) return;
 
   try {
     const beforeCount = barStore.count();
     const series = extractSeriesFromTvPayload(payload.p);
     if (!series.length) return;
 
-    barStore.ingestSeries(series);
+    const ingested = barStore.ingestSeries(series);
+    if (!ingested) return;
+
     const afterCount = barStore.count();
     if (afterCount <= beforeCount) return;
 
@@ -244,6 +267,7 @@ onContextShutdown(() => {
 });
 
 if (isExtensionContextValid()) {
+  installPageConsoleBridge();
   bootstrap();
 
   if (document.readyState === 'loading') {
@@ -280,6 +304,7 @@ window.addEventListener('pageshow', (event) => {
     return;
   }
   resetLocalState();
+  installPageConsoleBridge();
   bootstrap();
   symbolObserver.forceCheck();
 });
@@ -289,6 +314,7 @@ document.addEventListener('visibilitychange', () => {
   if (document.visibilityState !== 'visible') return;
 
   requestMainWorldInject();
+  installPageConsoleBridge();
   syncUrlSymbol();
   symbolObserver.forceCheck();
   resyncToBackground();
@@ -350,4 +376,6 @@ initPipelineDiagnostic({
   resyncToBackground,
 });
 
-console.log('[TV Quant] diagnostics ready: __TV_QUANT_RUN_DIAG__() / __TV_QUANT_WATCH__(30)');
+console.log(
+  '[TV Quant] page console ready: __TV_QUANT_STATUS__(), __TV_QUANT_RUN_DIAG__(), __TV_QUANT_WATCH__(30)'
+);

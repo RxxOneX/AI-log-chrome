@@ -1,9 +1,8 @@
 import { useEffect, useRef } from 'react';
 import { ColorType, createChart, IChartApi, ISeriesApi, LineSeries } from 'lightweight-charts';
-import { calculateExponentialFit } from '../../shared/math';
+import { buildExponentialFitLine } from '../../shared/exp-fit';
 import type { Bar } from '../../shared/types';
 import { barsToChartData } from '../../shared/metrics';
-import { isValidNumber } from '../../shared/format-number';
 
 interface ChartPanelProps {
   bars: Bar[];
@@ -21,15 +20,13 @@ export function ChartPanel({ bars, showExpFit }: ChartPanelProps) {
     const data = barsToChartData(bars);
     if (data.length < 2) return;
 
-    const fitData = data.map((d, i) => ({ x: i, y: d.value }));
-    const fit = calculateExponentialFit(fitData);
-    const expLineData = fit
-      ? data
-          .map((d, i) => ({
-            time: d.time,
-            value: fit.a * Math.exp(fit.k * i),
-          }))
-          .filter((point) => isValidNumber(point.value))
+    const prices = data.map((d) => d.value);
+    const fitLine = buildExponentialFitLine(prices);
+    const expLineData = fitLine
+      ? data.map((d, i) => ({
+          time: d.time,
+          value: fitLine.values[i],
+        }))
       : [];
 
     const handleResize = () => {
@@ -72,9 +69,10 @@ export function ChartPanel({ bars, showExpFit }: ChartPanelProps) {
       seriesRef.current = mainSeries;
 
       if (showExpFit && expLineData.length > 0) {
+        const unreliable = fitLine && !fitLine.fit.reliable;
         const expSeries = chart.addSeries(LineSeries, {
-          color: '#F6A800',
-          lineWidth: 2,
+          color: unreliable ? 'rgba(246, 168, 0, 0.55)' : '#F6A800',
+          lineWidth: unreliable ? 1 : 2,
           lineStyle: 2,
         });
         expSeries.setData(expLineData);

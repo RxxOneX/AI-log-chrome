@@ -3,24 +3,26 @@ import {
   extractBarPayloadsFromFrames,
 } from '../shared/bar-messages';
 import { MIN_USABLE_BARS } from '../shared/bar-merge';
+import { isSameSeriesSignature, seriesSignature } from '../shared/series-signature';
+import type { Bar } from '../shared/types';
 import {
   mergeSessions,
   readPageChartSession,
   sessionFromDocumentCookie,
   type TvSession,
 } from '../shared/tv-auth';
-import { fetchHistoryBars } from '../shared/tv-history-fetch';
 import {
   isChartUnavailablePage,
   probeChartSnapshot,
   probeLiveSymbol,
   safeActiveChart,
+  symbolsEquivalent,
   whenChartReady,
 } from '../shared/tv-chart-probe';
 import {
-  extractSymbolFromFrames,
   extractSymbolFromTitle,
   extractSymbolFromUrl,
+  isValidTvSymbolFormat,
 } from '../shared/tv-protocol';
 import type { ChartProbeWindow } from '../shared/tv-chart-probe';
 import {
@@ -31,14 +33,18 @@ import {
 
 const INJECT_SESSION_MESSAGE_TYPE = 'TV_QUANTS_SESSION';
 
+const INJECT_BUILD_ID = '3';
+
 (function () {
   const globalWindow = window as Window & {
     __TV_QUANT_INJECTED__?: boolean;
+    __TV_QUANT_BUILD_ID__?: string;
     __TV_QUANT_STATS__?: Record<string, unknown>;
   };
 
   if (globalWindow.__TV_QUANT_INJECTED__) return;
   globalWindow.__TV_QUANT_INJECTED__ = true;
+  globalWindow.__TV_QUANT_BUILD_ID__ = INJECT_BUILD_ID;
 
   const view = globalWindow as ChartProbeWindow;
 
@@ -66,13 +72,39 @@ const INJECT_SESSION_MESSAGE_TYPE = 'TV_QUANTS_SESSION';
   let lastSnapshotBarCount = 0;
   let symbolChangeTimer: ReturnType<typeof setTimeout> | null = null;
   let chartReadyHooked = false;
-  let historyFetchInFlight = false;
   let injectedSession: TvSession | null = null;
+  let chartRetryTimer: ReturnType<typeof setTimeout> | null = null;
+  let chartProbeGeneration = 0;
+  let preSwitchSeriesSignature = '';
+  let switchSettleUntil = 0;
+
+  function sleep(ms: number) {
+    return new Promise<void>((resolve) => setTimeout(resolve, ms));
+  }
 
   function resetSymbolState() {
     lastPostedSymbol = null;
     lastSnapshotSignature = '';
     lastSnapshotBarCount = 0;
+    preSwitchSeriesSignature = '';
+    switchSettleUntil = 0;
+  }
+
+  function isStaleSwitchSeries(bars: Bar[]): boolean {
+    if (!preSwitchSeriesSignature || Date.now() > switchSettleUntil) return false;
+    return isSameSeriesSignature(seriesSignature(bars), preSwitchSeriesSignature);
+  }
+
+  function capturePreSwitchSeries() {
+    const snapshot = isChartUnavailablePage(view)
+      ? null
+      : probeChartSnapshot(window.location.href, view);
+    if (snapshot && snapshot.bars.length >= 2) {
+      preSwitchSeriesSignature = seriesSignature(snapshot.bars);
+    }
+    lastSnapshotSignature = '';
+    lastSnapshotBarCount = 0;
+    switchSettleUntil = Date.now() + 10_000;
   }
 
   function touchActivity() {
@@ -87,17 +119,26 @@ const INJECT_SESSION_MESSAGE_TYPE = 'TV_QUANTS_SESSION';
   }
 
   function postSymbol(symbol: string, source: 'chart' | 'ws' | 'dom' | 'url' = 'chart') {
-    if (!symbol || symbol === lastPostedSymbol) return;
+    if (!symbol || !isValidTvSymbolFormat(symbol) || symbolsEquivalent(symbol, lastPostedSymbol)) return;
     lastPostedSymbol = symbol;
     stats.symbolPosts += 1;
     touchActivity();
     window.postMessage({ type: SYMBOL_MESSAGE_TYPE, symbol, source }, '*');
   }
 
-  function postBarsSnapshot(symbol: string, bars: Array<Record<string, number>>) {
+  function postBarsSnapshot(symbol: string, bars: Bar[]) {
     if (bars.length < 2) return;
 
-    const symbolChanged = lastPostedSymbol !== null && lastPostedSymbol !== symbol;
+    if (lastPostedSymbol && !symbolsEquivalent(lastPostedSymbol, symbol)) {
+      return;
+    }
+
+    if (isStaleSwitchSeries(bars)) {
+      return;
+    }
+
+    const symbolChanged =
+      lastPostedSymbol !== null && !symbolsEquivalent(lastPostedSymbol, symbol);
     if (
       !symbolChanged &&
       lastSnapshotBarCount >= 20 &&
@@ -111,6 +152,7 @@ const INJECT_SESSION_MESSAGE_TYPE = 'TV_QUANTS_SESSION';
 
     lastSnapshotSignature = signature;
     lastSnapshotBarCount = bars.length;
+    preSwitchSeriesSignature = '';
     stats.chartSnapshots += 1;
     touchActivity();
     window.postMessage({ type: BARS_SNAPSHOT_TYPE, symbol, bars }, '*');
@@ -124,11 +166,6 @@ const INJECT_SESSION_MESSAGE_TYPE = 'TV_QUANTS_SESSION';
     }
     touchActivity();
     mergeMessageTypes(data);
-
-    const symbol = extractSymbolFromFrames(data);
-    if (symbol) {
-      postSymbol(symbol, 'ws');
-    }
 
     for (const payload of extractBarPayloadsFromFrames(data)) {
       stats.barPayloads += 1;
@@ -282,65 +319,90 @@ const INJECT_SESSION_MESSAGE_TYPE = 'TV_QUANTS_SESSION';
     }
   }
 
-  async function fetchHistorySnapshot(symbol: string) {
-    if (historyFetchInFlight) return null;
-    historyFetchInFlight = true;
+  async function probeChartData(options?: { retries?: number; retryDelayMs?: number }) {
+    const retries = options?.retries ?? 0;
+    const retryDelayMs = options?.retryDelayMs ?? 250;
+    const generation = chartProbeGeneration;
 
-    try {
-      return await fetchHistoryBars(symbol, resolveSession(), `${window.location.origin}/`);
-    } finally {
-      historyFetchInFlight = false;
+    for (let attempt = 0; attempt <= retries; attempt += 1) {
+      if (generation !== chartProbeGeneration) return;
+
+      stats.chartProbes += 1;
+
+      const snapshot = isChartUnavailablePage(view)
+        ? null
+        : probeChartSnapshot(window.location.href, view);
+
+      if (snapshot && snapshot.bars.length >= MIN_USABLE_BARS) {
+        if (generation !== chartProbeGeneration) return;
+        if (isStaleSwitchSeries(snapshot.bars)) {
+          if (attempt < retries) {
+            await sleep(retryDelayMs);
+            continue;
+          }
+        } else {
+          postSymbol(snapshot.symbol, 'chart');
+          postBarsSnapshot(snapshot.symbol, snapshot.bars);
+          return;
+        }
+      }
+
+      const symbol =
+        snapshot?.symbol ??
+        probeLiveSymbol(window.location.href, view) ??
+        lastPostedSymbol;
+
+      if (!symbol) {
+        pollSymbolHints();
+        return;
+      }
+
+      if (snapshot && snapshot.bars.length >= 2) {
+        if (generation !== chartProbeGeneration) return;
+        if (isStaleSwitchSeries(snapshot.bars)) {
+          if (attempt < retries) {
+            await sleep(retryDelayMs);
+            continue;
+          }
+        } else {
+          postSymbol(snapshot.symbol, 'chart');
+          postBarsSnapshot(snapshot.symbol, snapshot.bars);
+          return;
+        }
+      }
+
+      if (attempt < retries) {
+        if (generation !== chartProbeGeneration) return;
+        await sleep(retryDelayMs);
+      }
     }
+
+    pollSymbolHints();
   }
 
-  async function probeChartData() {
-    stats.chartProbes += 1;
+  function scheduleChartProbeAfterSwitch() {
+    chartProbeGeneration += 1;
+    if (chartRetryTimer) clearTimeout(chartRetryTimer);
+    void probeChartData({ retries: 15, retryDelayMs: 400 });
 
-    const snapshot = isChartUnavailablePage(view)
-      ? null
-      : probeChartSnapshot(window.location.href, view);
-
-    if (snapshot && snapshot.bars.length >= MIN_USABLE_BARS) {
-      postSymbol(snapshot.symbol, 'chart');
-      postBarsSnapshot(snapshot.symbol, snapshot.bars);
-      return;
-    }
-
-    let symbol =
-      snapshot?.symbol ??
-      probeLiveSymbol(window.location.href, view) ??
-      lastPostedSymbol;
-
-    if (!symbol) {
-      pollSymbolHints();
-      return;
-    }
-
-    if (snapshot && snapshot.bars.length >= 2) {
-      postSymbol(snapshot.symbol, 'chart');
-      postBarsSnapshot(snapshot.symbol, snapshot.bars);
-      symbol = snapshot.symbol;
-    }
-
-    const historyBars = await fetchHistorySnapshot(symbol);
-    if (historyBars) {
-      postSymbol(symbol, 'chart');
-      postBarsSnapshot(symbol, historyBars);
-      return;
-    }
-
-    if (!snapshot) {
-      pollSymbolHints();
-    }
+    chartRetryTimer = setTimeout(() => {
+      chartRetryTimer = null;
+      void probeChartData({ retries: 8, retryDelayMs: 400 });
+    }, 3000);
   }
 
   function onLiveSymbolChanged() {
     if (symbolChangeTimer) clearTimeout(symbolChangeTimer);
+
+    capturePreSwitchSeries();
+
     symbolChangeTimer = setTimeout(() => {
       symbolChangeTimer = null;
-      resetSymbolState();
-      pollSymbolHints();
-      void probeChartData();
+      const live = probeLiveSymbol(window.location.href, view);
+      if (live) {
+        postSymbol(live, 'chart');
+      }
+      scheduleChartProbeAfterSwitch();
     }, 400);
   }
 
@@ -404,13 +466,6 @@ const INJECT_SESSION_MESSAGE_TYPE = 'TV_QUANTS_SESSION';
             ? null
             : probeChartSnapshot(window.location.href, view);
           const liveSymbol = probeLiveSymbol(window.location.href, view);
-          const symbol = snapshot?.symbol ?? liveSymbol ?? lastPostedSymbol;
-
-          let historyBars = 0;
-          if (symbol) {
-            const bars = await fetchHistorySnapshot(symbol);
-            historyBars = bars?.length ?? 0;
-          }
 
           window.postMessage(
             {
@@ -421,7 +476,7 @@ const INJECT_SESSION_MESSAGE_TYPE = 'TV_QUANTS_SESSION';
                 liveSymbol,
                 chartBars: snapshot?.bars.length ?? 0,
                 chartSymbol: snapshot?.symbol ?? null,
-                historyBars,
+                historyBars: 0,
                 hasSession: Boolean(session?.sessionid),
                 sessionMask: maskSessionId(session?.sessionid),
                 chartApi: Boolean(view.TradingViewApi),

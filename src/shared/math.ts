@@ -1,3 +1,5 @@
+import type { Bar, DrawdownGaugeState } from './types';
+
 export function calculateReturns(prices: number[]) {
   const returns = [];
   for (let i = 1; i < prices.length; i++) {
@@ -32,28 +34,133 @@ export function calculateSortinoRatio(returns: number[], riskFreeRate = 0) {
   return ((mean - riskFreeRate) / downsideStdDev) * Math.sqrt(252);
 }
 
-export function calculateMaxTTR(prices: number[]) {
-  if (prices.length === 0) return 0;
+const SECONDS_PER_DAY = 86_400;
+export const TTR_RECOVERY_CONFIRM_BARS = 3;
+export const DCA_LOOKBACK_DAYS = 730;
 
+function daysBetween(startTime: number, endTime: number): number {
+  if (endTime <= startTime) return 0;
+  return Math.round((endTime - startTime) / SECONDS_PER_DAY);
+}
+
+type DcaState = {
+  shares: number;
+  invested: number;
+  avgCost: number;
+};
+
+function dcaStateAt(bars: Bar[], index: number): DcaState | null {
+  let shares = 0;
+  let invested = 0;
+
+  for (let i = 0; i <= index; i++) {
+    const close = bars[i].close;
+    if (close <= 0) return null;
+    shares += 1 / close;
+    invested += 1;
+  }
+
+  return {
+    shares,
+    invested,
+    avgCost: invested / shares,
+  };
+}
+
+function isFloatingLoss(state: DcaState, close: number): boolean {
+  return close < state.avgCost;
+}
+
+function isFloatingProfit(state: DcaState, close: number): boolean {
+  return close > state.avgCost;
+}
+
+type DcaDrawdownScan = {
+  maxTTR: number;
+  inDrawdown: boolean;
+  currentDrawdownDays: number;
+  recoveringStreak: number;
+};
+
+function scanDcaDrawdown(bars: Bar[]): DcaDrawdownScan | null {
+  if (bars.length < 2) return null;
+
+  const sorted = [...bars].sort((a, b) => a.time - b.time);
   let maxTTR = 0;
-  let peak = prices[0];
-  let peakIndex = 0;
-  let inDrawdown = false;
+  let inEpisode = false;
+  let episodeStart = -1;
+  let consecutiveProfit = 0;
 
-  for (let i = 1; i < prices.length; i++) {
-    if (prices[i] > peak) {
-      if (inDrawdown) {
-        const ttr = i - peakIndex;
-        if (ttr > maxTTR) maxTTR = ttr;
-        inDrawdown = false;
+  for (let i = 0; i < sorted.length; i++) {
+    const state = dcaStateAt(sorted, i);
+    if (!state) return null;
+
+    const close = sorted[i].close;
+    const loss = isFloatingLoss(state, close);
+    const profit = isFloatingProfit(state, close);
+
+    if (inEpisode) {
+      if (profit) {
+        consecutiveProfit += 1;
+        if (consecutiveProfit >= TTR_RECOVERY_CONFIRM_BARS) {
+          const ttr = daysBetween(sorted[episodeStart].time, sorted[i].time);
+          if (ttr > maxTTR) maxTTR = ttr;
+          inEpisode = false;
+          episodeStart = -1;
+          consecutiveProfit = 0;
+        }
+      } else {
+        consecutiveProfit = 0;
       }
-      peak = prices[i];
-      peakIndex = i;
-    } else {
-      inDrawdown = true;
+    }
+
+    if (!inEpisode && loss) {
+      inEpisode = true;
+      episodeStart = i;
+      consecutiveProfit = 0;
     }
   }
-  return maxTTR;
+
+  if (inEpisode && episodeStart >= 0) {
+    const last = sorted.length - 1;
+    const ttr = daysBetween(sorted[episodeStart].time, sorted[last].time);
+    if (ttr > maxTTR) maxTTR = ttr;
+  }
+
+  const last = sorted.length - 1;
+  const currentDrawdownDays =
+    inEpisode && episodeStart >= 0
+      ? daysBetween(sorted[episodeStart].time, sorted[last].time)
+      : 0;
+
+  return {
+    maxTTR,
+    inDrawdown: inEpisode,
+    currentDrawdownDays,
+    recoveringStreak: inEpisode ? consecutiveProfit : 0,
+  };
+}
+
+export function evaluateDrawdownStatus(bars: Bar[]): DrawdownGaugeState | null {
+  const scan = scanDcaDrawdown(bars);
+  if (!scan) return null;
+
+  const progressToMaxTTR =
+    scan.maxTTR > 0 ? Math.min(1, scan.currentDrawdownDays / scan.maxTTR) : 0;
+
+  return {
+    inDrawdown: scan.inDrawdown,
+    currentDrawdownDays: scan.currentDrawdownDays,
+    daysToMaxTTR: scan.inDrawdown ? Math.max(0, scan.maxTTR - scan.currentDrawdownDays) : 0,
+    exceededMaxTTRDays:
+      scan.inDrawdown ? Math.max(0, scan.currentDrawdownDays - scan.maxTTR) : 0,
+    progressToMaxTTR,
+    recoveringStreak: scan.recoveringStreak,
+  };
+}
+
+export function calculateMaxTTR(bars: Bar[]): number {
+  return scanDcaDrawdown(bars)?.maxTTR ?? 0;
 }
 
 export function calculateMaxDrawdown(prices: number[]) {

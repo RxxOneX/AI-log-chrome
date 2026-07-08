@@ -1,9 +1,27 @@
 import type { Bar } from './types';
 import { isValidBar } from './bar-sanitize';
-import { extractSymbolFromTitle, extractSymbolFromUrl } from './tv-protocol';
+import { extractSymbolFromTitle, extractSymbolFromUrl, isValidTvSymbolFormat } from './tv-protocol';
 
 export function normalizeTvSymbol(symbol: string): string {
   return symbol.replace(/_NAUTH/g, '').trim();
+}
+
+export function symbolKey(symbol: string): string {
+  const normalized = normalizeTvSymbol(symbol).toUpperCase();
+  const idx = normalized.indexOf(':');
+  if (idx >= 0) return normalized.slice(idx + 1);
+  return normalized;
+}
+
+export function symbolsEquivalent(
+  a: string | null | undefined,
+  b: string | null | undefined
+): boolean {
+  if (!a || !b) return false;
+  const left = normalizeTvSymbol(a);
+  const right = normalizeTvSymbol(b);
+  if (left === right) return true;
+  return symbolKey(left) === symbolKey(right);
 }
 
 export function pickDisplaySymbol(
@@ -12,7 +30,7 @@ export function pickDisplaySymbol(
   for (const candidate of candidates) {
     if (!candidate) continue;
     const normalized = normalizeTvSymbol(candidate);
-    if (normalized) return normalized;
+    if (normalized && isValidTvSymbolFormat(normalized)) return normalized;
   }
   return null;
 }

@@ -130,6 +130,7 @@ export type StateSyncPayload = {
   connectionStatus: ConnectionStatus;
   alert: AlertResult | null;
   alertDismissed: boolean;
+  dataEpoch: number;
 };
 
 export type StateSyncMessage = {

@@ -60,3 +60,6 @@ export function formatPipelineReport(report: PipelineDiagnosticReport): string {
 
 export const DIAG_PING_TYPE = 'TV_QUANTS_DIAG_PING';
 export const DIAG_PONG_TYPE = 'TV_QUANTS_DIAG_PONG';
+export const DIAG_RUN_TYPE = 'TV_QUANTS_DIAG_RUN';
+export const DIAG_WATCH_TYPE = 'TV_QUANTS_DIAG_WATCH';
+export const DIAG_RESULT_TYPE = 'TV_QUANTS_DIAG_RESULT';

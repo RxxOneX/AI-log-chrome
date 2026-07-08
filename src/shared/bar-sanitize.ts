@@ -9,12 +9,21 @@ export function isValidBar(bar: Partial<Bar> | null | undefined): bar is Bar {
     time > 0 &&
     typeof open === 'number' &&
     Number.isFinite(open) &&
+    open > 0 &&
     typeof high === 'number' &&
     Number.isFinite(high) &&
+    high > 0 &&
     typeof low === 'number' &&
     Number.isFinite(low) &&
+    low > 0 &&
     typeof close === 'number' &&
-    Number.isFinite(close)
+    Number.isFinite(close) &&
+    close > 0 &&
+    high >= low &&
+    high >= open &&
+    high >= close &&
+    low <= open &&
+    low <= close
   );
 }
 

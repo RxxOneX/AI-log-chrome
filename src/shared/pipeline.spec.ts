@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { extractBarPayloadsFromFrames, countMessageTypes, isBarPayload } from './bar-messages';
 import { extractSeriesFromTvPayload } from './bar-parser';
-import { extractSymbolFromFrames, parseTvFrames } from './tv-protocol';
+import { extractSymbolFromFrames, extractChartSymbolFromFrames, isValidTvSymbolFormat, parseTvFrames } from './tv-protocol';
 
 const DU_FRAME = String.raw`~m~140~m~{"m":"du","p":["cs_test",{"sds_1":{"s":[{"i":0,"v":[1720000000,192.5,193,191.8,192.75,54320000]}]}}]}`;
 
@@ -54,6 +54,19 @@ describe('bar extraction', () => {
 describe('symbol extraction', () => {
   it('reads symbol_resolved', () => {
     expect(extractSymbolFromFrames(SYMBOL_FRAME)).toBe('SP:SPX');
+    expect(extractChartSymbolFromFrames(SYMBOL_FRAME)).toBe('SP:SPX');
+  });
+
+  it('ignores quote_add_symbols for chart symbol extraction', () => {
+    const quoteFrame = String.raw`~m~80~m~{"m":"quote_add_symbols","p":["qs_test","BITSTAMP:BTCUSD"]}`;
+    expect(extractSymbolFromFrames(quoteFrame)).toBe('BITSTAMP:BTCUSD');
+    expect(extractChartSymbolFromFrames(quoteFrame)).toBeNull();
+  });
+
+  it('rejects price labels as symbols', () => {
+    expect(isValidTvSymbolFormat('BATS:AU')).toBe(true);
+    expect(isValidTvSymbolFormat('AU 82.08 ▼ −2.34% 超级趋势')).toBe(false);
+    expect(isValidTvSymbolFormat('BITSTAMP:BTCUSD')).toBe(true);
   });
 });
 

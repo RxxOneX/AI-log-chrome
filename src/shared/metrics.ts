@@ -1,10 +1,12 @@
+import { areBarsCoherent } from './bar-coherence';
+import { evaluateExponentialFit } from './exp-fit';
 import {
-  calculateExponentialFit,
   calculateMaxDrawdown,
   calculateMaxTTR,
   calculateReturns,
   calculateSharpeRatio,
   calculateSortinoRatio,
+  evaluateDrawdownStatus,
 } from './math';
 import { finiteOrZero, isValidNumber } from './format-number';
 import { isValidBar, sanitizeBars } from './bar-sanitize';
@@ -30,6 +32,15 @@ export function filterBarsByDateRange(bars: Bar[], start: string, end: string): 
   });
 }
 
+export function filterBarsLastCalendarDays(bars: Bar[], lookbackDays: number): Bar[] {
+  const valid = sanitizeBars(bars).sort((a, b) => a.time - b.time);
+  if (valid.length === 0) return [];
+
+  const endTime = valid[valid.length - 1].time;
+  const startTime = endTime - lookbackDays * 86_400;
+  return valid.filter((bar) => bar.time >= startTime);
+}
+
 export function defaultDateRange(bars: Bar[], windowDays = 180): DateRange {
   if (bars.length === 0) {
     const today = new Date().toISOString().slice(0, 10);
@@ -44,28 +55,43 @@ export function defaultDateRange(bars: Bar[], windowDays = 180): DateRange {
   return { start, end };
 }
 
-export function calculateCompositeScore(r2: number, sharpe: number, sortino: number): number {
+export function calculateCompositeScore(
+  r2: number,
+  sharpe: number,
+  sortino: number,
+  maxDrawdown: number
+): number {
   const normSharpe = clamp(sharpe / 3, 0, 1);
   const normSortino = clamp(sortino / 3, 0, 1);
-  return (r2 * 0.4 + normSharpe * 0.3 + normSortino * 0.3) * 100;
+  const drawdownPenalty = clamp(1 - maxDrawdown, 0, 1);
+  return (r2 * 0.4 + normSharpe * 0.25 + normSortino * 0.25 + drawdownPenalty * 0.1) * 100;
 }
 
 export function computeMetrics(bars: Bar[]): Metrics | null {
-  const validBars = sanitizeBars(bars);
-  if (validBars.length < 2) return null;
+  const validBars = sanitizeBars(bars).sort((a, b) => a.time - b.time);
+  if (validBars.length < 2 || !areBarsCoherent(validBars)) return null;
 
   const prices = validBars.map((b) => b.close);
   const returns = calculateReturns(prices);
   const sharpe = calculateSharpeRatio(returns);
   const sortino = calculateSortinoRatio(returns);
-  const maxTTR = calculateMaxTTR(prices);
+  const emptyDrawdown = {
+    inDrawdown: false,
+    currentDrawdownDays: 0,
+    daysToMaxTTR: 0,
+    exceededMaxTTRDays: 0,
+    progressToMaxTTR: 0,
+    recoveringStreak: 0,
+  };
+
+  const maxTTR = calculateMaxTTR(validBars);
+  const drawdown = evaluateDrawdownStatus(validBars) ?? emptyDrawdown;
   const maxDrawdown = calculateMaxDrawdown(prices);
 
-  const fitData = validBars.map((_, i) => ({ x: i, y: prices[i] }));
-  const fit = calculateExponentialFit(fitData);
+  const fit = evaluateExponentialFit(prices);
   const rSquared = fit?.rSquared ?? 0;
   const k = fit?.k ?? 0;
-  const compositeScore = calculateCompositeScore(rSquared, sharpe, sortino);
+  const compositeScore = calculateCompositeScore(rSquared, sharpe, sortino, maxDrawdown);
 
   return {
     sharpe: finiteOrZero(sharpe),
@@ -75,6 +101,7 @@ export function computeMetrics(bars: Bar[]): Metrics | null {
     rSquared: finiteOrZero(rSquared),
     k: finiteOrZero(k),
     compositeScore: finiteOrZero(compositeScore),
+    drawdown,
   };
 }
 
@@ -111,15 +138,11 @@ export function evaluateAlert(
 }
 
 export function barsToChartData(bars: Bar[]): { time: string; value: number }[] {
-  const byTime = new Map<string, number>();
-
-  for (const bar of bars) {
-    if (!isValidBar(bar)) continue;
-    byTime.set(barToDateString(bar.time), bar.close);
-  }
-
-  return Array.from(byTime.entries())
-    .sort(([a], [b]) => a.localeCompare(b))
-    .map(([time, value]) => ({ time, value }))
+  return sanitizeBars(bars)
+    .sort((a, b) => a.time - b.time)
+    .map((bar) => ({
+      time: barToDateString(bar.time),
+      value: bar.close,
+    }))
     .filter((point) => isValidNumber(point.value));
 }

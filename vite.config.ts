@@ -6,20 +6,25 @@ import { build as viteBuild, defineConfig, type Plugin } from 'vite';
 import manifest from './src/manifest.json';
 
 const injectEntry = path.resolve(__dirname, 'src/inject/inject.ts');
-const injectOutDir = path.resolve(__dirname, 'dist/inject');
+const pageBridgeEntry = path.resolve(__dirname, 'src/inject/page-bridge.ts');
+const injectOutDir = path.resolve(__dirname, 'public/inject');
 
-async function buildInjectBundle() {
+async function buildInjectFile(
+  entry: string,
+  fileName: string,
+  emptyOutDir: boolean
+) {
   await viteBuild({
     configFile: false,
     build: {
       lib: {
-        entry: injectEntry,
+        entry,
         name: 'TvQuantInject',
         formats: ['iife'],
-        fileName: () => 'main-world.js',
+        fileName: () => fileName,
       },
       outDir: injectOutDir,
-      emptyOutDir: true,
+      emptyOutDir,
       minify: process.env.NODE_ENV === 'production',
       rollupOptions: {
         output: {
@@ -30,9 +35,17 @@ async function buildInjectBundle() {
   });
 }
 
+async function buildInjectBundle() {
+  await buildInjectFile(injectEntry, 'main-world.js', true);
+  await buildInjectFile(pageBridgeEntry, 'page-bridge.js', false);
+}
+
 function injectIifePlugin(): Plugin {
   return {
     name: 'inject-iife',
+    async buildStart() {
+      await buildInjectBundle();
+    },
     async closeBundle() {
       await buildInjectBundle();
     },

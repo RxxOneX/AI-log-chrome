@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Activity, SlidersHorizontal } from 'lucide-react';
 import { MESSAGE_TYPES, type StateSyncPayload } from '../shared/messages';
 import type { AppSettings, DateRange } from '../shared/types';
@@ -7,6 +7,7 @@ import { t } from '../shared/i18n';
 import { ConnectionBanner } from './components/ConnectionBanner';
 import { DateRangeControl } from './components/DateRangeControl';
 import { ChartPanel } from './components/ChartPanel';
+import { DrawdownGauge } from './components/DrawdownGauge';
 import { MetricsSection } from './components/MetricsSection';
 import { WatchlistSection } from './components/WatchlistSection';
 import { AlertCard } from './components/AlertCard';
@@ -23,6 +24,7 @@ const emptyState: StateSyncPayload = {
   connectionStatus: 'connecting',
   alert: null,
   alertDismissed: false,
+  dataEpoch: 0,
 };
 
 async function getActiveTabId(): Promise<number | null> {
@@ -38,8 +40,13 @@ export default function App() {
   const [state, setState] = useState<StateSyncPayload>(emptyState);
   const [tabId, setTabId] = useState<number | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const lastDataEpochRef = useRef(0);
 
   const language = state.settings.language;
+  const dataReady =
+    state.connectionStatus === 'connected' &&
+    state.bars.length >= 2 &&
+    state.metrics !== null;
 
   const refreshState = useCallback(async () => {
     const id = await getActiveTabId();
@@ -77,7 +84,27 @@ export default function App() {
       void getActiveTabId().then((activeId) => {
         if (!activeId || message.tabId !== activeId) return;
         setTabId(activeId);
-        setState(message.payload as StateSyncPayload);
+
+        const payload = message.payload as StateSyncPayload;
+        const epochChanged = payload.dataEpoch !== lastDataEpochRef.current;
+        if (epochChanged) {
+          lastDataEpochRef.current = payload.dataEpoch;
+        }
+
+        const shouldClearDisplay =
+          payload.connectionStatus === 'connecting' ||
+          (epochChanged && payload.connectionStatus !== 'connected');
+
+        setState(
+          shouldClearDisplay
+            ? {
+                ...payload,
+                bars: [],
+                metrics: null,
+                fullMetrics: null,
+              }
+            : payload
+        );
       });
     };
 
@@ -191,13 +218,18 @@ export default function App() {
 
         <div>
           <div className="text-xs text-gray-500 mb-2 uppercase tracking-wider">{t('chartTitle', language)}</div>
-          <ChartPanel bars={state.bars} showExpFit={state.settings.showExpFit} />
-          {state.symbol && (
+          <ChartPanel bars={dataReady ? state.bars : []} showExpFit={state.settings.showExpFit} />
+          {dataReady && state.symbol && (
             <div className="text-xs text-gray-400 mt-2 font-mono">{state.symbol}</div>
+          )}
+          {!dataReady && state.symbol && state.connectionStatus === 'connecting' && (
+            <div className="text-xs text-gray-500 mt-2 font-mono">{state.symbol}</div>
           )}
         </div>
 
-        <MetricsSection metrics={state.metrics} language={language} />
+        <MetricsSection metrics={dataReady ? state.metrics : null} language={language} />
+
+        <DrawdownGauge metrics={dataReady ? state.metrics : null} language={language} />
 
         <WatchlistSection
           watchlist={state.watchlist}

@@ -31,7 +31,9 @@ import type {
   WatchlistItem,
 } from '../shared/types';
 import { mergeBars, shouldAcceptBarReplace } from '../shared/bar-merge';
+import { areBarsCoherent } from '../shared/bar-coherence';
 import { sanitizeBars } from '../shared/bar-sanitize';
+import { symbolsEquivalent } from '../shared/tv-chart-probe';
 import { DEFAULT_SETTINGS, STALE_THRESHOLD_MS } from '../shared/types';
 import { readTvSessionForUrl } from './tv-session';
 
@@ -40,6 +42,7 @@ type TabState = {
   connectionStatus: ConnectionStatus;
   dateRange: DateRange | null;
   alertDismissed: boolean;
+  dataEpoch: number;
 };
 
 const tabStates = new Map<number, TabState>();
@@ -154,6 +157,7 @@ function getTabState(tabId: number): TabState {
       connectionStatus: 'connecting',
       dateRange: null,
       alertDismissed: false,
+      dataEpoch: 0,
     });
   }
   return tabStates.get(tabId)!;
@@ -229,14 +233,21 @@ function buildState(tabId: number): StateSyncPayload {
   const rawBars = tabState.symbolBars?.bars ?? [];
   const bars = sanitizeBars(rawBars);
   const symbol = tabState.symbolBars?.symbol || null;
+  const storedStatus = resolveConnectionStatus(tabState);
+  const coherent = areBarsCoherent(bars);
+  const connectionStatus =
+    storedStatus === 'connected' && bars.length > 0 && !coherent ? 'connecting' : storedStatus;
+  const isReady = connectionStatus === 'connected' && coherent;
 
   const dateRange =
     tabState.dateRange ??
     (bars.length > 0 ? defaultDateRange(bars, settings.defaultWindowDays) : { start: '', end: '' });
 
-  const filteredBars = filterBarsByDateRange(bars, dateRange.start, dateRange.end);
-  const metrics = computeMetrics(filteredBars);
-  const fullMetrics = computeMetrics(bars);
+  const filteredBars = isReady
+    ? filterBarsByDateRange(bars, dateRange.start, dateRange.end)
+    : [];
+  const metrics = isReady ? computeMetrics(filteredBars) : null;
+  const fullMetrics = metrics;
 
   let alert = null;
   if (metrics && symbol && !tabState.alertDismissed) {
@@ -262,9 +273,10 @@ function buildState(tabId: number): StateSyncPayload {
     settings,
     watchlist: enrichWatchlist(),
     dateRange,
-    connectionStatus: resolveConnectionStatus(tabState),
+    connectionStatus,
     alert,
     alertDismissed: tabState.alertDismissed,
+    dataEpoch: tabState.dataEpoch,
   };
 }
 
@@ -285,6 +297,7 @@ function resetTabStateForNavigation(tabId: number) {
   tabState.connectionStatus = 'connecting';
   tabState.dateRange = null;
   tabState.alertDismissed = false;
+  tabState.dataEpoch += 1;
 }
 
 function isTradingViewChartUrl(url?: string): boolean {
@@ -340,8 +353,20 @@ async function handleMessage(
     case MESSAGE_TYPES.BARS_UPDATE: {
       const tabState = getTabState(tabId);
       const existing = tabState.symbolBars;
-      const symbolChanged = existing?.symbol !== message.symbol;
+      const symbolChanged = !symbolsEquivalent(existing?.symbol ?? '', message.symbol);
+
+      if (
+        tabState.connectionStatus === 'connecting' &&
+        existing?.symbol &&
+        !symbolsEquivalent(existing.symbol, message.symbol)
+      ) {
+        break;
+      }
+
       const incomingBars = sanitizeBars(message.bars);
+      if (!areBarsCoherent(incomingBars)) {
+        break;
+      }
       const mergedBars = symbolChanged
         ? incomingBars
         : mergeBars(existing?.bars ?? [], incomingBars);
@@ -367,7 +392,7 @@ async function handleMessage(
     }
     case MESSAGE_TYPES.SYMBOL_CHANGED: {
       const tabState = getTabState(tabId);
-      const sameSymbol = tabState.symbolBars?.symbol === message.symbol;
+      const sameSymbol = symbolsEquivalent(tabState.symbolBars?.symbol ?? '', message.symbol);
 
       tabState.symbolBars = {
         symbol: message.symbol,
@@ -377,6 +402,7 @@ async function handleMessage(
       if (!sameSymbol) {
         tabState.dateRange = null;
         tabState.alertDismissed = false;
+        tabState.dataEpoch += 1;
       }
       tabState.connectionStatus = message.symbol
         ? sameSymbol && tabState.symbolBars.bars.length > 0

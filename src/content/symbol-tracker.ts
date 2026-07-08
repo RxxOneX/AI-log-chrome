@@ -1,4 +1,5 @@
-import { normalizeTvSymbol, type SymbolSource } from '../shared/tv-chart-probe';
+import { normalizeTvSymbol, symbolsEquivalent, type SymbolSource } from '../shared/tv-chart-probe';
+import { isValidTvSymbolFormat } from '../shared/tv-protocol';
 
 type SourceMap = Record<SymbolSource, string | null>;
 
@@ -18,11 +19,15 @@ export class SymbolTracker {
 
   set(source: SymbolSource, symbol: string | null) {
     const normalized = symbol ? normalizeTvSymbol(symbol) : null;
+    if (normalized && !isValidTvSymbolFormat(normalized)) {
+      this.sources[source] = null;
+      return;
+    }
     this.sources[source] = normalized;
   }
 
   get(): string | null {
-    const order: SymbolSource[] = ['chart', 'ws', 'dom', 'url'];
+    const order: SymbolSource[] = ['chart', 'dom', 'url'];
     for (const source of order) {
       const symbol = this.sources[source];
       if (symbol) {
@@ -46,6 +51,26 @@ export class SymbolTracker {
   commit(source: SymbolSource, symbol: string | null): string | null {
     this.set(source, symbol);
     return this.get();
+  }
+
+  invalidateExcept(source: SymbolSource) {
+    const keys = Object.keys(this.sources) as SymbolSource[];
+    for (const key of keys) {
+      if (key !== source) {
+        this.sources[key] = null;
+      }
+    }
+  }
+
+  invalidateStaleSources(nextSymbol: string, preferredSource: SymbolSource) {
+    const keys = Object.keys(this.sources) as SymbolSource[];
+    for (const key of keys) {
+      if (key === preferredSource) continue;
+      const current = this.sources[key];
+      if (current && !symbolsEquivalent(current, nextSymbol)) {
+        this.sources[key] = null;
+      }
+    }
   }
 
   hasChanged(source: SymbolSource, symbol: string | null): boolean {

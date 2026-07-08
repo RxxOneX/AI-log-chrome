@@ -12,6 +12,15 @@ export type SymbolBars = {
   lastUpdatedAt: number;
 };
 
+export type DrawdownGaugeState = {
+  inDrawdown: boolean;
+  currentDrawdownDays: number;
+  daysToMaxTTR: number;
+  exceededMaxTTRDays: number;
+  progressToMaxTTR: number;
+  recoveringStreak: number;
+};
+
 export type Metrics = {
   sharpe: number;
   sortino: number;
@@ -20,6 +29,7 @@ export type Metrics = {
   rSquared: number;
   k: number;
   compositeScore: number;
+  drawdown: DrawdownGaugeState;
 };
 
 export type WatchlistItem = {

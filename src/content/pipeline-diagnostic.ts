@@ -1,6 +1,5 @@
 import { MESSAGE_TYPES, type PipelineDiagnosticState, type TvSessionPayload } from '../shared/messages';
 import { MIN_USABLE_BARS } from '../shared/bar-merge';
-import { fetchHistoryBars } from '../shared/tv-history-fetch';
 import {
   probeChartSnapshot,
   probeLiveSymbol,
@@ -10,6 +9,9 @@ import { extractSymbolFromUrl } from '../shared/tv-protocol';
 import {
   DIAG_PING_TYPE,
   DIAG_PONG_TYPE,
+  DIAG_RESULT_TYPE,
+  DIAG_RUN_TYPE,
+  DIAG_WATCH_TYPE,
   formatPipelineReport,
   maskSessionId,
   summarizeSteps,
@@ -49,13 +51,37 @@ let deps: ContentDiagDeps | null = null;
 export function initPipelineDiagnostic(context: ContentDiagDeps) {
   deps = context;
 
-  const win = window as Window & {
-    __TV_QUANT_RUN_DIAG__?: () => Promise<PipelineDiagnosticReport>;
-    __TV_QUANT_WATCH__?: (seconds?: number) => Promise<void>;
-  };
+  window.addEventListener('message', (event) => {
+    if (event.source !== window || !event.data?.requestId) return;
 
-  win.__TV_QUANT_RUN_DIAG__ = () => runPipelineDiagnostic();
-  win.__TV_QUANT_WATCH__ = (seconds = 30) => watchPipeline(seconds);
+    if (event.data.type === DIAG_RUN_TYPE) {
+      void runPipelineDiagnostic().then((report) => {
+        window.postMessage(
+          {
+            type: DIAG_RESULT_TYPE,
+            requestId: event.data.requestId,
+            payload: report,
+          },
+          '*'
+        );
+      });
+      return;
+    }
+
+    if (event.data.type === DIAG_WATCH_TYPE) {
+      const seconds = typeof event.data.seconds === 'number' ? event.data.seconds : 30;
+      void watchPipeline(seconds).then(() => {
+        window.postMessage(
+          {
+            type: DIAG_RESULT_TYPE,
+            requestId: event.data.requestId,
+            payload: { ok: true },
+          },
+          '*'
+        );
+      });
+    }
+  });
 }
 
 function step(
@@ -151,11 +177,8 @@ export async function runPipelineDiagnostic(): Promise<PipelineDiagnosticReport>
         { symbol: inject.chartSymbol, liveSymbol: inject.liveSymbol })
     );
 
-    const historyBars = inject.historyBars ?? 0;
     steps.push(
-      step('inject_history_probe', 'inject', historyBars >= MIN_USABLE_BARS ? 'pass' : historyBars > 1 ? 'warn' : 'fail',
-        `history api bars=${historyBars}`,
-        { hasSession: inject.hasSession, session: inject.sessionMask })
+      step('inject_history_probe', 'inject', 'skip', 'history api not used (chart snapshot is primary)')
     );
 
     steps.push(
@@ -239,24 +262,6 @@ export async function runPipelineDiagnostic(): Promise<PipelineDiagnosticReport>
           backgroundBars: bgBars,
         })
       );
-    }
-  }
-
-  const testSymbol = chartProbe?.symbol ?? liveProbe ?? contentSymbol ?? urlSymbol;
-  if (testSymbol && session?.loggedIn) {
-    try {
-      const historyBars = await fetchHistoryBars(testSymbol, {
-        sessionid: session.sessionid,
-        sessionid_sign: session.sessionid_sign,
-      }, `${window.location.origin}/`);
-      const count = historyBars?.length ?? 0;
-      steps.push(
-        step('content_history_fetch', 'content', count >= MIN_USABLE_BARS ? 'pass' : 'warn',
-          `direct history fetch bars=${count} (may fail from page context)`,
-          { symbol: testSymbol })
-      );
-    } catch {
-      steps.push(step('content_history_fetch', 'content', 'warn', 'history fetch unavailable from page context'));
     }
   }
 

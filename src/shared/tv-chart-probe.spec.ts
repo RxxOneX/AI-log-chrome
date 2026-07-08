@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { barsFromSeriesData, isChartUnavailablePage, normalizeTvSymbol, pickDisplaySymbol, type ChartProbeWindow } from './tv-chart-probe';
+import { barsFromSeriesData, isChartUnavailablePage, normalizeTvSymbol, pickDisplaySymbol, symbolKey, symbolsEquivalent, type ChartProbeWindow } from './tv-chart-probe';
 import { isHistoryUrl, parseHistoryResponse } from './tv-history';
 
 describe('tv history', () => {
@@ -26,6 +26,12 @@ describe('tv history', () => {
 describe('tv chart probe', () => {
   it('normalizes internal auth symbol suffix', () => {
     expect(normalizeTvSymbol('SP_NAUTH:SPX')).toBe('SP:SPX');
+  });
+
+  it('treats exchange aliases as the same symbol', () => {
+    expect(symbolsEquivalent('NASDAQ:AAPL', 'BATS:AAPL')).toBe(true);
+    expect(symbolsEquivalent('SP:SPX', 'NASDAQ:AAPL')).toBe(false);
+    expect(symbolKey('BATS:MSFT')).toBe('MSFT');
   });
 
   it('prefers live chart symbol over url symbol', () => {

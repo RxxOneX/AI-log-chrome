@@ -23,5 +23,12 @@
       "run_at": "document_start",
       "all_frames": true
     }
+  ],
+  "web_accessible_resources": [
+    {
+      "matches": ["*://*.tradingview.com/*"],
+      "resources": ["inject/page-bridge.js", "inject/main-world.js"],
+      "use_dynamic_url": false
+    }
   ]
 }

@@ -21,9 +21,9 @@ export const zh = {
   rSquared: 'R方 (拟合度)',
   dailyGrowth: '每日增长率 (k)',
   maxTTR: '最大恢复时间 (TTR)',
-  maxTTRDesc: '历史最长回撤恢复',
+  maxTTRDesc: '成本回撤恢复时间',
   maxDrawdown: '最大回撤幅度',
-  maxDrawdownDesc: '历史最大净值回撤',
+  maxDrawdownDesc: '区间内最大净值回撤',
   days: '天',
   watchlistTitle: '高置信度标的榜单',
   watchlistSymbol: '标的',
@@ -48,6 +48,13 @@ export const zh = {
   noSymbol: '未识别标的',
   waiting: '...',
   chartTitle: '价格走势',
+  drawdownGaugeTitle: '回撤状态',
+  gaugeStatusNoDrawdown: '未回撤',
+  gaugeStatusDrawdown: '回撤进度 {percent}%',
+  gaugeProgressFull: '未消耗最大 TTR 额度',
+  gaugeProgressRemaining: '距最大 TTR 还差 {days} 天',
+  gaugeProgressExceeded: '已超过最大 TTR {days} 天',
+  gaugeProgressElapsed: '已回撤 {current} / {max} 天',
 } as const;
 
 export type TranslationKey = keyof typeof zh;
